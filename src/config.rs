@@ -6,14 +6,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use directories::ProjectDirs;
 use lazy_static::lazy_static;
 use ratatui::style::{Color, Modifier, Style};
-use serde::{Deserialize, de::Deserializer};
-use tracing::error;
+use serde::{Deserialize, Serialize, de::Deserializer, ser::Serializer};
+use tracing::{error, debug};
 
 use crate::{action::Action, app::Mode};
 
 const CONFIG: &str = include_str!("../.config/config.json5");
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, Serialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub data_dir: PathBuf,
@@ -21,7 +21,7 @@ pub struct AppConfig {
     pub config_dir: PathBuf,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default, flatten)]
     pub config: AppConfig,
@@ -48,6 +48,8 @@ impl Config {
         let default_config: Config = json5::from_str(CONFIG).unwrap();
         let data_dir = get_data_dir();
         let config_dir = get_config_dir();
+        debug!("{}", config_dir.display());
+        
         let mut builder = config::Config::builder()
             .set_default("data_dir", data_dir.to_str().unwrap())?
             .set_default("config_dir", config_dir.to_str().unwrap())?;
@@ -75,22 +77,52 @@ impl Config {
 
         let mut cfg: Self = builder.build()?.try_deserialize()?;
 
-        for (mode, default_bindings) in default_config.keybindings.0.iter() {
-            let user_bindings = cfg.keybindings.0.entry(*mode).or_default();
+        for (mode, default_bindings) in default_config.keybindings.modes.iter() {
+            let user_bindings = cfg.keybindings.modes.entry(*mode).or_default();
             for (key, cmd) in default_bindings.iter() {
-                user_bindings
-                    .entry(key.clone())
-                    .or_insert_with(|| cmd.clone());
+                if !user_bindings.contains_key(key) {
+                    user_bindings.insert(key.clone(), cmd.clone());
+                }
             }
         }
-        for (mode, default_styles) in default_config.styles.0.iter() {
-            let user_styles = cfg.styles.0.entry(*mode).or_default();
-            for (style_key, style) in default_styles.iter() {
-                user_styles.entry(style_key.clone()).or_insert(*style);
+        for (key, cmd) in default_config.keybindings.global.iter() {
+            if !cfg.keybindings.global.contains_key(key) {
+                cfg.keybindings.global.insert(key.clone(), cmd.clone());
             }
         }
 
         Ok(cfg)
+    }
+
+    pub fn save(&self) -> color_eyre::Result<()> {
+        let target_dir = self.config.config_dir.clone();
+        
+        std::fs::create_dir_all(&target_dir)?;
+
+        let target_path = target_dir.join("config.json5");
+        
+        let json_string = serde_json::to_string_pretty(self)?;
+        
+        std::fs::write(target_path, json_string)?;
+        Ok(())
+    }
+        
+    pub fn edit_config_in_editor(&mut self) {
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
+        let config_dir = CONFIG_FOLDER.clone().unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(".config")
+        });
+        let config_path = config_dir.join("config.json5");
+
+
+        let mut cmd = std::process::Command::new(editor);
+        cmd.arg(&config_path);
+    
+        if let Err(e) = cmd.status() {
+            tracing::error!("Falha ao abrir o editor: {:?}", e);
+        }
     }
 }
 
@@ -121,27 +153,92 @@ fn project_directory() -> Option<ProjectDirs> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct KeyBindings(pub HashMap<Mode, HashMap<Vec<KeyEvent>, Action>>);
+pub struct KeyBindings {
+    pub global: HashMap<Vec<KeyEvent>, Action>,
+    pub modes: HashMap<Mode, HashMap<Vec<KeyEvent>, Action>>,
+}
+
+impl KeyBindings {
+    pub fn get_action(&self, mode: &Mode, key_events: &[KeyEvent]) -> Option<&Action> {
+        if let Some(mode_bindings) = self.modes.get(mode) {
+            if let Some(action) = mode_bindings.get(key_events) {
+                return Some(action);
+            }
+        }
+
+        self.global.get(key_events)
+    }
+}
 
 impl<'de> Deserialize<'de> for KeyBindings {
-    fn deserialize<D>(deserializer: D) -> color_eyre::Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let parsed_map = HashMap::<Mode, HashMap<String, Action>>::deserialize(deserializer)?;
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum KeyBindingValue {
+            ModeBlock(HashMap<String, Action>),
+            GlobalAction(Action),
+        }
 
-        let keybindings = parsed_map
-            .into_iter()
-            .map(|(mode, inner_map)| {
-                let converted_inner_map = inner_map
-                    .into_iter()
-                    .map(|(key_str, cmd)| (parse_key_sequence(&key_str).unwrap(), cmd))
-                    .collect();
-                (mode, converted_inner_map)
-            })
-            .collect();
+        let parsed_map = HashMap::<String, KeyBindingValue>::deserialize(deserializer)?;
+        let mut global = HashMap::new();
+        let mut modes = HashMap::new();
 
-        Ok(KeyBindings(keybindings))
+        for (key, value) in parsed_map {
+            match value {
+                KeyBindingValue::ModeBlock(inner_map) => {
+                    let mode = match key.to_lowercase().as_str() {
+                        "home" => Mode::Home,
+                        "config" => Mode::Config,
+                        _ => continue,
+                    };
+                    let mut converted_inner_map = HashMap::new();
+                    for (key_str, cmd) in inner_map {
+                        let parsed_key = parse_key_sequence(&key_str).map_err(serde::de::Error::custom)?;
+                        converted_inner_map.insert(parsed_key, cmd);
+                    }
+                    modes.insert(mode, converted_inner_map);
+                }
+                KeyBindingValue::GlobalAction(cmd) => {
+                    let parsed_key = parse_key_sequence(&key).map_err(serde::de::Error::custom)?;
+                    global.insert(parsed_key, cmd);
+                }
+            }
+        }
+
+        Ok(KeyBindings { global, modes })
+    }
+}
+
+impl Serialize for KeyBindings {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(None)?;
+
+        for (keys, action) in &self.global {
+            let key_str = keys.iter().map(key_event_to_string).collect::<Vec<_>>().join(" ");
+            map.serialize_entry(&key_str, action)?;
+        }
+
+        for (mode, bindings) in &self.modes {
+            let mode_str = match mode {
+                Mode::Home => "Home",
+                Mode::Config => "Config",
+            };
+            let mut inner_map = HashMap::new();
+            for (keys, action) in bindings {
+                let key_str = keys.iter().map(key_event_to_string).collect::<Vec<_>>().join(" ");
+                inner_map.insert(key_str, action.clone());
+            }
+            map.serialize_entry(mode_str, &inner_map)?;
+        }
+
+        map.end()
     }
 }
 
@@ -316,7 +413,7 @@ pub fn parse_key_sequence(raw: &str) -> color_eyre::Result<Vec<KeyEvent>, String
     sequences.into_iter().map(parse_key_event).collect()
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Styles(pub HashMap<Mode, HashMap<String, Style>>);
 
 impl<'de> Deserialize<'de> for Styles {
@@ -503,7 +600,7 @@ mod tests {
         let c = Config::new()?;
         assert_eq!(
             c.keybindings
-                .0
+                .modes
                 .get(&Mode::Home)
                 .unwrap()
                 .get(&parse_key_sequence("<q>").unwrap_or_default())
