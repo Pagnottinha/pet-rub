@@ -7,6 +7,8 @@ use ratatui::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
+use std::{fs, path::Path};
+
 use super::Component;
 use crate::{
     action::Action,
@@ -21,13 +23,13 @@ pub struct ConfigView {
 }
 
 impl ConfigView {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
 
         Self {
             command_tx: None,
-            config: Config::default(),
+            config,
             list_state,
             display_items: Vec::new(),
         }
@@ -112,7 +114,13 @@ impl Component for ConfigView {
             }
             KeyCode::Enter | KeyCode::Char('e') => {
                 if let Some(tx) = &self.command_tx {
-                    tx.send(Action::EditConfigInEditor)?;
+                    let config_path = self.config.config.config_dir.join("config.json5");
+                    let target_dir = Path::new("/tmp/config.json5");
+                    fs::copy(config_path, target_dir)?;
+                    tx.send(Action::EditFile(
+                            target_dir.to_string_lossy().into_owned(), 
+                            Some(Box::new(Action::ValidateAndSaveConfig))
+                    ))?;
                 }
             }
             _ => {}

@@ -1,6 +1,6 @@
 #![allow(dead_code)] // Remove this once you start using the code
 
-use std::{collections::HashMap, env, path::PathBuf};
+use std::{collections::HashMap, env, path::{PathBuf, Path}, fs};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use directories::ProjectDirs;
@@ -94,35 +94,20 @@ impl Config {
         Ok(cfg)
     }
 
-    pub fn save(&self) -> color_eyre::Result<()> {
-        let target_dir = self.config.config_dir.clone();
-        
-        std::fs::create_dir_all(&target_dir)?;
+    pub fn validate_and_update(&mut self, temp_path: &Path) -> color_eyre::Result<()> {
+        let content = fs::read_to_string(temp_path)?;
 
-        let target_path = target_dir.join("config.json5");
-        
-        let json_string = serde_json::to_string_pretty(self)?;
-        
-        std::fs::write(target_path, json_string)?;
+        let new_config: Config = match json5::from_str(&content) {
+            Ok(c) => c,
+            Err(e) => return Err(color_eyre::eyre::eyre!("Invalid JSON: {}", e)),
+        };
+
+        let dest_path = self.config.config_dir.join("config.json5");
+        std::fs::write(&dest_path, content)?;
+
+        *self = new_config;
+
         Ok(())
-    }
-        
-    pub fn edit_config_in_editor(&mut self) {
-        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
-        let config_dir = CONFIG_FOLDER.clone().unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(".config")
-        });
-        let config_path = config_dir.join("config.json5");
-
-
-        let mut cmd = std::process::Command::new(editor);
-        cmd.arg(&config_path);
-    
-        if let Err(e) = cmd.status() {
-            tracing::error!("Falha ao abrir o editor: {:?}", e);
-        }
     }
 }
 

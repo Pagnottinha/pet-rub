@@ -16,8 +16,8 @@ pub enum Action {
     Help,
     SwitchModeHome,
     SwitchModeConfig,
-    EditConfigInEditor,
-    StoreKeybinding(Option<crate::app::Mode>, Vec<crossterm::event::KeyEvent>, Box<Action>),
+    EditFile(String, Option<Box<Action>>),
+    ValidateAndSaveConfig,
     LeiSetMode(lei::LocalMode),
     LeiFetchPatchsets,
     // TODO: Implement Lei action to have local public inbox for faster loadings

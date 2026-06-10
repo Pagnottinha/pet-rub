@@ -52,6 +52,7 @@ impl App {
         list: String,
         query: String,
     ) -> color_eyre::Result<Self> {
+        let config = Config::new()?;
         let (action_tx, action_rx) = mpsc::unbounded_channel();
         let mut tabs_components: HashMap<Mode, Vec<Box<dyn Component>>> = HashMap::new();
         tabs_components.insert(Mode::Home, vec![
@@ -60,7 +61,7 @@ impl App {
             Box::new(Patchsets::new()),
         ]);
         tabs_components.insert(Mode::Config, vec![
-            Box::new(ConfigView::new()),
+            Box::new(ConfigView::new(config.clone())),
         ]);
         Ok(Self {
             tick_rate,
@@ -68,7 +69,7 @@ impl App {
             tabs_components,
             should_quit: false,
             should_suspend: false,
-            config: Config::new()?,
+            config,
             mode: Mode::Home,
             last_tick_key_events: Vec::new(),
             action_tx,
@@ -166,8 +167,9 @@ impl App {
                 Action::Render => self.render(tui)?,
                 Action::SwitchModeHome => self.mode = Mode::Home,
                 Action::SwitchModeConfig => self.mode = Mode::Config,
-                Action::EditConfigInEditor => self.edit_config(tui),
-                Action::StoreKeybinding(mode, ref keys, ref new_action) => self.save_keybind(mode, keys.to_vec(), new_action.clone()),
+                Action::EditFile(ref path, ref action) => 
+                    self.edit_file(tui, path.to_string(), action.clone())?,
+                Action::ValidateAndSaveConfig => self.validate_and_save_config(),
                 _ => {}
             }
             match self.tabs_components.get_mut(&self.mode) {
@@ -235,70 +237,41 @@ impl App {
             }
         })?;
         Ok(())
-    }
-    
-    fn save_keybind(&mut self, mode: Option<crate::app::Mode>, keys: Vec<crossterm::event::KeyEvent>, new_action: Box<Action>) {
-        if let Some(m) = mode {
-            self.config.keybindings.modes.entry(m).or_default().insert(keys, *new_action);
-        } else {
-            self.config.keybindings.global.insert(keys, *new_action);
+    } 
+
+    fn edit_file(&mut self, tui: &mut Tui, path: String, opt_action: Option<Box<Action>>) -> color_eyre::Result<()> {
+        tui.exit()?;
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
+        let cmd_args = vec![path];
+        let status = std::process::Command::new(&editor).args(&cmd_args).status()?;
+        if !status.success() {
+            eprintln!("\nCommand failed with status: {}", status);
         }
+        tui.enter()?;
+        let _ = tui.terminal.clear();
 
-        if let Err(err) = self.config.save() {
-            tracing::error!("Failed when saving cnfigurations: {:?}", err);
-            let _ = self.action_tx.send(
-                Action::Error(format!("It wasn't possible to reach the disk: {:?}", err))
-            );
-        } else {
-            tracing::info!("Success in saving configuration.");
+        if let Some(action) = opt_action {
+            let _ = self.action_tx.send(*action);
+        }
+        Ok(())
+    }
 
+    fn validate_and_save_config(&mut self) {
+        let tmp_path = std::path::Path::new("/tmp/config.json5");
+
+        if let Err(e) = self.config.validate_and_update(tmp_path) {
+            let _ = self.action_tx.send(Action::Error(format!("As alterações não foram salvas: {}", e)));
+        } else {               
             for components in self.tabs_components.values_mut() {
-                for component in components {
-                    let _ = component.register_config_handler(self.config.clone());
-                }
-            }
-        }
-    }
-    
-    fn edit_config(&mut self, tui: &mut Tui) {
-        if let Err(err) = self.action_tx.send(Action::Suspend) {
-            tracing::error!("Fail to suspend: {:?}", err);
-        }
-        /*
-        if let Err(err) = tui.exit() {
-            tracing::error!("Failed to suspend: {:?}", err);
-            return;
-        }
-        */
-        self.config.edit_config_in_editor();
-        
-        /*
-        if let Err(err) = tui.enter() {
-            tracing::error!("Failed to resume TUI: {:?}", err);
-        }
-        */
-        match Config::new() {
-            Ok(new_config) => {
-                self.config = new_config;
-
-                for components in self.tabs_components.values_mut() {
-                    for component in components {
-                        let _ = component.register_config_handler(self.config.clone());
+                for component in components.iter_mut() {
+                    if let Err(e) = component.register_config_handler(self.config.clone()) {
+                        let _ = self.action_tx.send(
+                            Action::Error(format!("Erro ao atualizar componente: {}", e))
+                        );
                     }
                 }
-                tracing::info!("Keybindings successfully updated!");
             }
-            Err(err) => {
-                tracing::error!("Fail to read the updated file: {:?}", err);
-            }
-        }
-        /*
-        let _ = self.action_tx.send(Action::ClearScreen);
-        let _ = self.action_tx.send(Action::Render);
-        */
-
-        if let Err(err) = self.action_tx.send(Action::Resume) {
-            tracing::error!("Fail to resume: {:?}", err);
         }
     }
 }
+
