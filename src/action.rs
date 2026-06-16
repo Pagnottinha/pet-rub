@@ -15,6 +15,7 @@ pub enum Action {
     Error(String),
     Help,
     SwitchModeHome,
+    SwitchModeConfig,
     LeiSetMode(lei::LocalMode),
     LeiFetchPatchsets,
     // TODO: Implement Lei action to have local public inbox for faster loadings

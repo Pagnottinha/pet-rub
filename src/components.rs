@@ -7,6 +7,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{action::Action, config::Config, tui::Event};
 
+pub mod config_view;
 pub mod home;
 pub mod lei;
 pub mod patchsets;

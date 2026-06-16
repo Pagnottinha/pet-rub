@@ -12,7 +12,13 @@ use tracing::{debug, info};
 
 use crate::{
     action::Action,
-    components::{Component, home::Home, ktree::Ktree, lei::Lei, patchsets::Patchsets},
+    components::{Component, 
+        home::Home,
+        ktree::Ktree,
+        lei::Lei,
+        patchsets::Patchsets,
+        config_view::ConfigView,
+    },
     config::Config,
     tui::{Event, Tui},
 };
@@ -34,6 +40,7 @@ pub struct App {
 pub enum Mode {
     #[default]
     Home,
+    Config,
 }
 
 impl App {
@@ -44,6 +51,7 @@ impl App {
         list: String,
         query: String,
     ) -> color_eyre::Result<Self> {
+        let config = Config::new()?;
         let (action_tx, action_rx) = mpsc::unbounded_channel();
         let mut tabs_components: HashMap<Mode, Vec<Box<dyn Component>>> = HashMap::new();
         tabs_components.insert(Mode::Home, vec![
@@ -52,13 +60,16 @@ impl App {
             Box::new(Lei::new(domain, list, query)),
             Box::new(Patchsets::new()),
         ]);
+        tabs_components.insert(Mode::Config, vec![
+            Box::new(ConfigView::new(config.clone()))
+        ]);
         Ok(Self {
             tick_rate,
             frame_rate,
             tabs_components,
             should_quit: false,
             should_suspend: false,
-            config: Config::new()?,
+            config,
             mode: Mode::Home,
             last_tick_key_events: Vec::new(),
             action_tx,
@@ -155,6 +166,7 @@ impl App {
                 Action::Resize(w, h) => self.handle_resize(tui, w, h)?,
                 Action::Render => self.render(tui)?,
                 Action::SwitchModeHome => self.mode = Mode::Home,
+                Action::SwitchModeConfig => self.mode = Mode::Config,
                 _ => {}
             }
             match self.tabs_components.get_mut(&self.mode) {
@@ -188,9 +200,10 @@ impl App {
                 .split(frame.area());
 
             // Configure titles and discovers which is active
-            let titles = vec![Line::from(" 1. Home ")];
+            let titles = vec![Line::from(" 1. Home "), Line::from(" 2. Config ")];
             let tab_index = match self.mode {
                 Mode::Home => 0,
+                Mode::Config => 1,
             };
 
             // Creates and render the tabs widget at top (chunks)

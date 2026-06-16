@@ -158,6 +158,7 @@ impl<'de> Deserialize<'de> for KeyBindings {
                 KeyBindingValue::ModeBlock(inner_map) => {
                     let mode = match key.to_lowercase().as_str() {
                         "home" => Mode::Home,
+                        "config" => Mode::Config,
                         _ => continue,
                     };
                     let mut converted_inner_map = HashMap::new();
