@@ -45,7 +45,7 @@ impl ConfigView {
 
         self.display_items.push("=== GLOBAL KEYBINDINGS ===".to_string());
         if self.config.keybindings.global.is_empty() {
-            self.display_items.push("  Nenhum atalho global configurado.".to_string());
+            self.display_items.push("  No global keybinding configured.".to_string());
         } else {
             for (keys, action) in &self.config.keybindings.global {
                 let key_strs: Vec<String> = keys.iter().map(|k| crate::config::key_event_to_string(k)).collect();
@@ -57,7 +57,7 @@ impl ConfigView {
         for (mode, binds) in &self.config.keybindings.modes {
             self.display_items.push(format!("=== MODE: {:?} ===", mode));
             if binds.is_empty() {
-                self.display_items.push("  Nenhum atalho definido.".to_string());
+                self.display_items.push("  No keybinding defined.".to_string());
             } else {
                 for (keys, action) in binds {
                     let key_strs: Vec<String> = keys.iter().map(|k| crate::config::key_event_to_string(k)).collect();
@@ -67,8 +67,8 @@ impl ConfigView {
             self.display_items.push("".to_string());
         }
         
-        self.display_items.push("=== AJUDA ===".to_string());
-        self.display_items.push("  [e / Enter] - Abrir arquivo no Editor".to_string());
+        self.display_items.push("=== Help ===".to_string());
+        self.display_items.push("  [e / Enter] - Open file in editor".to_string());
     }
 }
 

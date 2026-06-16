@@ -583,15 +583,11 @@ mod tests {
     #[test]
     fn test_config() -> color_eyre::Result<()> {
         let c = Config::new()?;
-        assert_eq!(
-            c.keybindings
-                .modes
-                .get(&Mode::Home)
-                .unwrap()
-                .get(&parse_key_sequence("<q>").unwrap_or_default())
-                .unwrap(),
-            &Action::Quit
-        );
+
+        let key_seq = parse_key_sequence("<q>").unwrap_or_default();
+        let action = c.keybindings.get_action(&Mode::Home, &key_seq);
+
+        assert_eq!(action, Some(&Action::Quit));
         Ok(())
     }
 

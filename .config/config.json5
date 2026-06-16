@@ -4,8 +4,9 @@
     "<Ctrl-d>": "Quit", // Another way to quit
     "<Ctrl-c>": "Quit", // Yet another way to quit
     "<Ctrl-z>": "Suspend", // Suspend the application,
-    "<F8>": "SwitchModeHome", // Change mode to Home
-    "<F9>": "SwitchModeConfig", // Change mode to Config,
+    "<F1": "SwitchModeHome", // Change mode to Home
+    "<F2>": "SwitchModeConfig", // Change mode to Config,
+    "<Ctrl-q>": "ClosePopup",
     "Home": { 
         // custom keybindings 
     },
