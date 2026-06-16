@@ -1,10 +1,12 @@
 {
   "keybindings": {
+    "<q>": "Quit", // Quit the application
+    "<Ctrl-d>": "Quit", // Another way to quit
+    "<Ctrl-c>": "Quit", // Yet another way to quit
+    "<Ctrl-z>": "Suspend", // Suspend the application
+    "<F1>": "SwitchModeHome", // Switch to home tab
     "Home": {
-      "<q>": "Quit", // Quit the application
-      "<Ctrl-d>": "Quit", // Another way to quit
-      "<Ctrl-c>": "Quit", // Yet another way to quit
-      "<Ctrl-z>": "Suspend" // Suspend the application
-    },
+        // custom keybindings
+    }
   }
 }

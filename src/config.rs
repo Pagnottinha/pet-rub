@@ -75,18 +75,17 @@ impl Config {
 
         let mut cfg: Self = builder.build()?.try_deserialize()?;
 
-        for (mode, default_bindings) in default_config.keybindings.0.iter() {
-            let user_bindings = cfg.keybindings.0.entry(*mode).or_default();
+        for (mode, default_bindings) in default_config.keybindings.modes.iter() {
+            let user_bindings = cfg.keybindings.modes.entry(*mode).or_default();
             for (key, cmd) in default_bindings.iter() {
-                user_bindings
-                    .entry(key.clone())
-                    .or_insert_with(|| cmd.clone());
+                if !user_bindings.contains_key(key) {
+                    user_bindings.insert(key.clone(), cmd.clone());
+                }
             }
         }
-        for (mode, default_styles) in default_config.styles.0.iter() {
-            let user_styles = cfg.styles.0.entry(*mode).or_default();
-            for (style_key, style) in default_styles.iter() {
-                user_styles.entry(style_key.clone()).or_insert(*style);
+        for (key, cmd) in default_config.keybindings.global.iter() {
+            if !cfg.keybindings.global.contains_key(key) {
+                cfg.keybindings.global.insert(key.clone(), cmd.clone());
             }
         }
 
@@ -121,27 +120,61 @@ fn project_directory() -> Option<ProjectDirs> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct KeyBindings(pub HashMap<Mode, HashMap<Vec<KeyEvent>, Action>>);
+pub struct KeyBindings {
+    pub global: HashMap<Vec<KeyEvent>, Action>,
+    pub modes: HashMap<Mode, HashMap<Vec<KeyEvent>, Action>>,
+}
+
+impl KeyBindings {
+    pub fn get_action(&self, mode: &Mode, key_events: &[KeyEvent]) -> Option<&Action> {
+        if let Some(mode_bindings) = self.modes.get(mode) {
+            if let Some(action) = mode_bindings.get(key_events) {
+                return Some(action);
+            }
+        }
+
+        self.global.get(key_events)
+    }
+}
 
 impl<'de> Deserialize<'de> for KeyBindings {
     fn deserialize<D>(deserializer: D) -> color_eyre::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let parsed_map = HashMap::<Mode, HashMap<String, Action>>::deserialize(deserializer)?;
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum KeyBindingValue {
+            ModeBlock(HashMap<String, Action>),
+            GlobalAction(Action),
+        }
 
-        let keybindings = parsed_map
-            .into_iter()
-            .map(|(mode, inner_map)| {
-                let converted_inner_map = inner_map
-                    .into_iter()
-                    .map(|(key_str, cmd)| (parse_key_sequence(&key_str).unwrap(), cmd))
-                    .collect();
-                (mode, converted_inner_map)
-            })
-            .collect();
+        let parsed_map = HashMap::<String, KeyBindingValue>::deserialize(deserializer)?;
+        let mut global = HashMap::new();
+        let mut modes = HashMap::new();
 
-        Ok(KeyBindings(keybindings))
+        for (key, value) in parsed_map {
+            match value {
+                KeyBindingValue::ModeBlock(inner_map) => {
+                    let mode = match key.to_lowercase().as_str() {
+                        "home" => Mode::Home,
+                        _ => continue,
+                    };
+                    let mut converted_inner_map = HashMap::new();
+                    for (key_str, cmd) in inner_map {
+                        let parsed_key = parse_key_sequence(&key_str).map_err(serde::de::Error::custom)?;
+                        converted_inner_map.insert(parsed_key, cmd);
+                    }
+                    modes.insert(mode, converted_inner_map);
+                }
+                KeyBindingValue::GlobalAction(cmd) => {
+                    let parsed_key = parse_key_sequence(&key).map_err(serde::de::Error::custom)?;
+                    global.insert(parsed_key, cmd);
+                }
+            }
+        }
+
+        Ok(KeyBindings { global, modes })
     }
 }
 
@@ -501,15 +534,11 @@ mod tests {
     #[test]
     fn test_config() -> color_eyre::Result<()> {
         let c = Config::new()?;
-        assert_eq!(
-            c.keybindings
-                .0
-                .get(&Mode::Home)
-                .unwrap()
-                .get(&parse_key_sequence("<q>").unwrap_or_default())
-                .unwrap(),
-            &Action::Quit
-        );
+
+        let key_seq = parse_key_sequence("<q>").unwrap_or_default();
+        let action = c.keybindings.get_action(&Mode::Home, &key_seq);
+
+        assert_eq!(action, Some(&Action::Quit));
         Ok(())
     }
 

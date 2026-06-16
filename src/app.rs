@@ -1,6 +1,12 @@
 use crossterm::event::KeyEvent;
-use ratatui::prelude::Rect;
+use ratatui::{
+    prelude::Rect,
+    layout::{Constraint, Direction, Layout},
+    text::Line,
+    widgets::{Block, Borders, Tabs},
+};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 
@@ -15,7 +21,7 @@ pub struct App {
     config: Config,
     tick_rate: f64,
     frame_rate: f64,
-    components: Vec<Box<dyn Component>>,
+    tabs_components: HashMap<Mode, Vec<Box<dyn Component>>>,
     should_quit: bool,
     should_suspend: bool,
     mode: Mode,
@@ -39,15 +45,17 @@ impl App {
         query: String,
     ) -> color_eyre::Result<Self> {
         let (action_tx, action_rx) = mpsc::unbounded_channel();
+        let mut tabs_components: HashMap<Mode, Vec<Box<dyn Component>>> = HashMap::new();
+        tabs_components.insert(Mode::Home, vec![
+            Box::new(Home::new()),
+            Box::new(Ktree::new()),
+            Box::new(Lei::new(domain, list, query)),
+            Box::new(Patchsets::new()),
+        ]);
         Ok(Self {
             tick_rate,
             frame_rate,
-            components: vec![
-                Box::new(Home::new()),
-                Box::new(Lei::new(domain, list, query)),
-                Box::new(Patchsets::new()),
-                Box::new(Ktree::new()),
-            ],
+            tabs_components,
             should_quit: false,
             should_suspend: false,
             config: Config::new()?,
@@ -65,14 +73,12 @@ impl App {
             .frame_rate(self.frame_rate);
         tui.enter()?;
 
-        for component in self.components.iter_mut() {
-            component.register_action_handler(self.action_tx.clone())?;
-        }
-        for component in self.components.iter_mut() {
-            component.register_config_handler(self.config.clone())?;
-        }
-        for component in self.components.iter_mut() {
-            component.init(tui.size()?)?;
+        for components in self.tabs_components.values_mut() {
+            for component in components.iter_mut() {
+                component.register_action_handler(self.action_tx.clone())?;
+                component.register_config_handler(self.config.clone())?;
+                component.init(tui.size()?)?;
+            }
         }
 
         let action_tx = self.action_tx.clone();
@@ -107,36 +113,29 @@ impl App {
             Event::Key(key) => self.handle_key_event(key)?,
             _ => {}
         }
-        for component in self.components.iter_mut() {
-            if let Some(action) = component.handle_events(Some(event.clone()))? {
-                action_tx.send(action)?;
+        match self.tabs_components.get_mut(&self.mode) {
+            Some(components) => {
+                for component in components.iter_mut() {
+                    if let Some(action) = component.handle_events(Some(event.clone()))? {
+                        action_tx.send(action)?;
+                    }
+                }
+            }
+            None => {
+                // TODO: Feedback
             }
         }
         Ok(())
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> color_eyre::Result<()> {
-        let action_tx = self.action_tx.clone();
-        let Some(keymap) = self.config.keybindings.0.get(&self.mode) else {
-            return Ok(());
-        };
-        match keymap.get(&vec![key]) {
-            Some(action) => {
-                info!("Got action: {action:?}");
-                action_tx.send(action.clone())?;
-            }
-            _ => {
-                // If the key was not handled as a single key action,
-                // then consider it for multi-key combinations.
-                self.last_tick_key_events.push(key);
+        self.last_tick_key_events.push(key);
 
-                // Check for multi-key combinations
-                if let Some(action) = keymap.get(&self.last_tick_key_events) {
-                    info!("Got action: {action:?}");
-                    action_tx.send(action.clone())?;
-                }
-            }
+        if let Some(action) = self.config.keybindings.get_action(&self.mode, &self.last_tick_key_events) {
+            info!("Got action: {action:?}");
+            self.action_tx.send(action.clone())?;
         }
+
         Ok(())
     }
 
@@ -155,12 +154,20 @@ impl App {
                 Action::ClearScreen => tui.terminal.clear()?,
                 Action::Resize(w, h) => self.handle_resize(tui, w, h)?,
                 Action::Render => self.render(tui)?,
+                Action::SwitchModeHome => self.mode = Mode::Home,
                 _ => {}
             }
-            for component in self.components.iter_mut() {
-                if let Some(action) = component.update(action.clone())? {
-                    self.action_tx.send(action)?
-                };
+            match self.tabs_components.get_mut(&self.mode) {
+                Some(components) => {
+                    for component in components.iter_mut() {
+                        if let Some(action) = component.update(action.clone())? {
+                            self.action_tx.send(action)?
+                        };
+                    }
+                }
+                None => {
+                    // TODO: Feedback
+                }
             }
         }
         Ok(())
@@ -174,11 +181,42 @@ impl App {
 
     fn render(&mut self, tui: &mut Tui) -> color_eyre::Result<()> {
         tui.draw(|frame| {
-            for component in self.components.iter_mut() {
-                if let Err(err) = component.draw(frame, frame.area()) {
-                    let _ = self
-                        .action_tx
-                        .send(Action::Error(format!("Failed to draw: {:?}", err)));
+            // Split screen: 3 lines for tabs at top
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(3), Constraint::Min(0)])
+                .split(frame.area());
+
+            // Configure titles and discovers which is active
+            let titles = vec![Line::from(" 1. Home ")];
+            let tab_index = match self.mode {
+                Mode::Home => 0,
+            };
+
+            // Creates and render the tabs widget at top (chunks)
+            let tabs = Tabs::new(titles)
+                .block(Block::default().borders(Borders::ALL).title(" Tabs "))
+                .select(tab_index)
+                .highlight_style(
+                    ratatui::style::Style::default()
+                        .add_modifier(ratatui::style::Modifier::REVERSED)
+                );
+
+            frame.render_widget(tabs, chunks[0]);
+
+            // Render tabs_components based active tab
+            match self.tabs_components.get_mut(&self.mode) {
+                Some(components) => {
+                    for component in components.iter_mut() {
+                        if let Err(err) = component.draw(frame, chunks[1]) {
+                            let _ = self
+                                .action_tx
+                                .send(Action::Error(format!("Failed to draw: {:?}", err)));
+                        }
+                    }
+                }
+                None => {
+                    // TODO: Feedback
                 }
             }
         })?;
