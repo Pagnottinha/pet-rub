@@ -5,6 +5,7 @@ use ratatui::{
     style::{Color, Style, Modifier},
     widgets::{Block, BorderType, Borders, HighlightSpacing, List, ListState},
 };
+use std::{fs, path::Path};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::Component;
@@ -107,6 +108,22 @@ impl Component for ConfigView {
                 };
                 self.list_state.select(Some(prev));
             }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn update(&mut self, action: Action) -> color_eyre::Result<Option<Action>> {
+        match action {
+            Action::EditConfig => {
+                let config_path = self.config.config.config_dir.join("config.json5");
+                let target_dir = Path::new("/tmp/config.json5");
+                fs::copy(config_path, target_dir)?;
+                return Ok(Some(Action::EditFile(
+                        target_dir.to_string_lossy().into_owned(),
+                        Some(Box::new(Action::ValidateAndSaveConfig))
+                )));
+            },
             _ => {}
         }
         Ok(None)

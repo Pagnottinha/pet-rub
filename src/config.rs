@@ -1,7 +1,6 @@
 #![allow(dead_code)] // Remove this once you start using the code
 
-use std::{collections::HashMap, env, path::PathBuf};
-
+use std::{collections::HashMap, env, fs, path::{PathBuf, Path}};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use directories::ProjectDirs;
 use lazy_static::lazy_static;
@@ -90,6 +89,25 @@ impl Config {
         }
 
         Ok(cfg)
+    }
+
+    pub fn validate_and_update(&mut self, temp_path: &Path) -> color_eyre::Result<()> {
+        let content = fs::read_to_string(temp_path)?;
+
+        let mut new_config: Config = match json5::from_str(&content) {
+            Ok(c) => c,
+            Err(e) => return Err(color_eyre::eyre::eyre!("Invalid JSON: {}", e)),
+        };
+
+        let dest_path = self.config.config_dir.join("config.json5");
+        std::fs::write(&dest_path, content)?;
+
+        new_config.config.config_dir = self.config.config_dir.clone();
+        new_config.config.data_dir = self.config.data_dir.clone();
+
+        *self = new_config;
+
+        Ok(())
     }
 }
 

@@ -18,6 +18,9 @@ pub enum Action {
     SwitchModeConfig,
     LeiSetMode(lei::LocalMode),
     LeiFetchPatchsets,
+    EditConfig,
+    EditFile(String, Option<Box<Action>>),
+    ValidateAndSaveConfig,
     // TODO: Implement Lei action to have local public inbox for faster loadings
     PatchsetsList(String),
     PatchsetsAddIndex,

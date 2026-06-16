@@ -167,6 +167,9 @@ impl App {
                 Action::Render => self.render(tui)?,
                 Action::SwitchModeHome => self.mode = Mode::Home,
                 Action::SwitchModeConfig => self.mode = Mode::Config,
+                Action::EditFile(ref path, ref action) =>
+                    self.edit_file(tui, path.to_string(), action.clone())?,
+                Action::ValidateAndSaveConfig => self.validate_and_save_config(),
                 _ => {}
             }
             match self.tabs_components.get_mut(&self.mode) {
@@ -234,5 +237,38 @@ impl App {
             }
         })?;
         Ok(())
+    }
+
+    fn edit_file(&mut self, tui: &mut Tui, path: String, opt_action: Option<Box<Action>>) -> color_eyre::Result<()> {
+        tui.exit()?;
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
+        let cmd_args = vec![path];
+        let status = std::process::Command::new(&editor).args(&cmd_args).status()?;
+        if !status.success() {
+            eprintln!("\nCommand failed with status: {}", status);
+        }
+        tui.enter()?;
+        let _ = tui.terminal.clear();
+
+        if let Some(action) = opt_action {
+            let _ = self.action_tx.send(*action);
+        }
+        Ok(())
+    }
+
+    fn validate_and_save_config(&mut self) {
+        let tmp_path = std::path::Path::new("/tmp/config.json5");
+
+        if let Err(e) = self.config.validate_and_update(tmp_path) {
+            let _ = self.action_tx.send(Action::Error(format!("The changes weren't saved:\n{}", e)));
+        } else {
+            for components in self.tabs_components.values_mut() {
+                for component in components.iter_mut() {
+                    if let Err(e) = component.register_config_handler(self.config.clone()) {
+                        let _ = self.action_tx.send(Action::Error(format!("Error at updating component: {}", e)));
+                    }
+                }
+            }
+        }
     }
 }
