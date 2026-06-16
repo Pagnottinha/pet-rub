@@ -6,6 +6,7 @@
     "<Ctrl-z>": "Suspend", // Suspend the application
     "<F1>": "SwitchModeHome", // Switch to home tab
     "<F2>": "SwitchModeConfig", // Switch to config tab
+    "<Ctrl-q>": "ClosePopup", // Close popup
     "Home": {
         // custom keybindings
     },

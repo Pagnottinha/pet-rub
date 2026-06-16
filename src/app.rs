@@ -18,6 +18,7 @@ use crate::{
         lei::Lei,
         patchsets::Patchsets,
         config_view::ConfigView,
+        popup::Popup
     },
     config::Config,
     tui::{Event, Tui},
@@ -61,7 +62,8 @@ impl App {
             Box::new(Patchsets::new()),
         ]);
         tabs_components.insert(Mode::Config, vec![
-            Box::new(ConfigView::new(config.clone()))
+            Box::new(ConfigView::new(config.clone())),
+            Box::new(Popup::new()),
         ]);
         Ok(Self {
             tick_rate,
@@ -167,6 +169,15 @@ impl App {
                 Action::Render => self.render(tui)?,
                 Action::SwitchModeHome => self.mode = Mode::Home,
                 Action::SwitchModeConfig => self.mode = Mode::Config,
+                Action::Error(ref message, ref action) => {
+                    let _ = self.action_tx.send(
+                        Action::ShowPopup(
+                            "ERROR".to_string(),
+                            message.to_string(),
+                            action.clone()
+                        )
+                    );
+                },
                 Action::EditFile(ref path, ref action) =>
                     self.edit_file(tui, path.to_string(), action.clone())?,
                 Action::ValidateAndSaveConfig => self.validate_and_save_config(),
@@ -227,7 +238,10 @@ impl App {
                         if let Err(err) = component.draw(frame, chunks[1]) {
                             let _ = self
                                 .action_tx
-                                .send(Action::Error(format!("Failed to draw: {:?}", err)));
+                                .send(Action::Error(
+                                        format!("Failed to draw: {:?}", err),
+                                        None
+                                ));
                         }
                     }
                 }
@@ -260,12 +274,21 @@ impl App {
         let tmp_path = std::path::Path::new("/tmp/config.json5");
 
         if let Err(e) = self.config.validate_and_update(tmp_path) {
-            let _ = self.action_tx.send(Action::Error(format!("The changes weren't saved:\n{}", e)));
+            let _ = self.action_tx.send(Action::Error(
+                    format!("The changes weren't saved:\n{}", e),
+                    Some(Box::new(Action::EditFile(
+                                tmp_path.to_string_lossy().into_owned(),
+                                Some(Box::new(Action::ValidateAndSaveConfig))
+                    )))
+            ));
         } else {
             for components in self.tabs_components.values_mut() {
                 for component in components.iter_mut() {
                     if let Err(e) = component.register_config_handler(self.config.clone()) {
-                        let _ = self.action_tx.send(Action::Error(format!("Error at updating component: {}", e)));
+                        let _ = self.action_tx.send(Action::Error(
+                                format!("Error at updating component: {}", e),
+                                None
+                        ));
                     }
                 }
             }
